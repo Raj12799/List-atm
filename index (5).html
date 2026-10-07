@@ -1,0 +1,1050 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ATM Task Manager & Map</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- html2pdf -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Leaflet & Routing Machine CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Hide scrollbar */
+        ::-webkit-scrollbar {
+            width: 0px;
+            background: transparent;
+        }
+
+        /* Checkbox Styling */
+        .custom-checkbox {
+            appearance: none;
+            background-color: #fff;
+            margin: 0;
+            width: 1.75em;
+            height: 1.75em;
+            border: 2px solid #cbd5e1;
+            border-radius: 50%;
+            display: grid;
+            place-content: center;
+            transition: all 0.2s ease-in-out;
+            cursor: pointer;
+        }
+
+        .custom-checkbox::before {
+            content: "";
+            width: 0.9em;
+            height: 0.9em;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em white;
+            background-color: white;
+            transform-origin: center;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+
+        .custom-checkbox:checked {
+            background-color: #3b82f6; /* Blue 500 */
+            border-color: #3b82f6;
+        }
+
+        .custom-checkbox:checked::before {
+            transform: scale(1);
+        }
+
+        /* List Animations */
+        .list-item {
+            transition: all 0.3s ease;
+        }
+        .list-item.completed {
+            opacity: 0.6;
+            background-color: #f1f5f9;
+        }
+        .list-item.completed .atm-id {
+            text-decoration: line-through;
+            color: #64748b;
+        }
+
+        /* Toasts */
+        @keyframes slideUp {
+            from { transform: translate(-50%, 100%); opacity: 0; }
+            to { transform: translate(-50%, 0); opacity: 1; }
+        }
+        .toast {
+            animation: slideUp 0.3s ease forwards;
+        }
+
+        /* Map UI Adjustments */
+        #map {
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        .leaflet-routing-container {
+            background-color: white;
+            padding: 10px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            max-height: 200px;
+            overflow-y: auto;
+            margin-bottom: 60px !important;
+            display: none; /* Hide default ugly panel */
+        }
+    </style>
+</head>
+<body class="text-slate-800 h-screen flex flex-col overflow-hidden">
+
+    <!-- App Header -->
+    <header class="bg-blue-600 text-white shadow-md z-20 flex-shrink-0">
+        <div class="px-5 py-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-xl font-bold tracking-tight">Nashik ATM Tracker</h1>
+                <p class="text-xs text-blue-100 mt-0.5">Offline-first • Route Planner</p>
+            </div>
+            <!-- Sync/Save Icon Status -->
+            <div id="sync-status" class="bg-blue-500 rounded-full w-8 h-8 flex items-center justify-center text-sm shadow-inner">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+            </div>
+        </div>
+        <!-- Stats -->
+        <div class="bg-blue-700 px-5 py-2.5 flex justify-between text-xs font-semibold text-blue-100">
+            <span id="stat-total" class="flex items-center"><i class="fa-solid fa-list mr-1"></i> Total: 0</span>
+            <span id="stat-pending" class="text-amber-300 flex items-center"><i class="fa-solid fa-clock mr-1"></i> Pending: 0</span>
+            <span id="stat-completed" class="text-emerald-300 flex items-center"><i class="fa-solid fa-check-double mr-1"></i> Done: 0</span>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 relative overflow-hidden bg-slate-50">
+        
+        <!-- View 1: List View -->
+        <div id="view-list" class="absolute inset-0 overflow-y-auto p-4 pb-24 transition-opacity duration-300">
+            <!-- Search Bar -->
+            <div class="mb-4 relative">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-3.5 text-slate-400"></i>
+                <input type="text" id="search-input" placeholder="Search ATM ID or Location..." 
+                       class="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition"
+                       onkeyup="filterList()">
+            </div>
+            <div id="atm-list-container" class="space-y-3">
+                <!-- List dynamically injected -->
+            </div>
+        </div>
+
+        <!-- View 2: Map View -->
+        <div id="view-map" class="absolute inset-0 hidden opacity-0 transition-opacity duration-300 flex flex-col">
+            <div id="map" class="flex-1"></div>
+            
+            <!-- Map Overlay Controls -->
+            <div class="absolute bottom-20 left-4 right-4 z-[400] flex justify-between pointer-events-none">
+                <button onclick="clearRoute()" class="pointer-events-auto bg-white text-rose-500 px-4 py-3 rounded-xl shadow-lg font-bold text-sm flex items-center space-x-2 border border-slate-100">
+                    <i class="fa-solid fa-route-slash"></i> <span>Clear Route</span>
+                </button>
+                <button onclick="locateUser()" class="pointer-events-auto bg-blue-600 text-white h-12 w-12 rounded-full shadow-lg flex items-center justify-center border-2 border-white">
+                    <i class="fa-solid fa-location-crosshairs text-lg"></i>
+                </button>
+            </div>
+            
+            <!-- Active Route Indicator -->
+            <div id="route-indicator" class="absolute top-4 left-4 right-4 z-[400] hidden">
+                <div class="bg-white/90 backdrop-blur border border-blue-200 text-blue-800 p-3 rounded-xl shadow-lg text-sm font-medium flex items-center justify-between">
+                    <div class="flex items-center">
+                        <div class="h-2 w-2 bg-blue-500 rounded-full animate-pulse mr-2"></div>
+                        <span id="route-text">Navigating to ATM...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- View 3: Export View -->
+        <div id="view-export" class="absolute inset-0 hidden opacity-0 overflow-y-auto p-5 pb-24 transition-opacity duration-300">
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-6">
+                <h2 class="text-lg font-bold text-slate-800 mb-4 flex items-center"><i class="fa-solid fa-print text-blue-500 mr-2"></i> Print & Export Settings</h2>
+                
+                <!-- Filter Selection -->
+                <div class="mb-5">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">1. Select Status</h3>
+                    <div class="flex space-x-2 bg-slate-100 p-1 rounded-xl">
+                        <label class="flex-1 relative cursor-pointer">
+                            <input type="radio" name="export-filter" value="all" class="peer sr-only" checked>
+                            <div class="p-2 text-center rounded-lg text-slate-600 font-semibold text-sm transition peer-checked:bg-white peer-checked:text-blue-600 peer-checked:shadow-sm">All ATMs</div>
+                        </label>
+                        <label class="flex-1 relative cursor-pointer">
+                            <input type="radio" name="export-filter" value="pending" class="peer sr-only">
+                            <div class="p-2 text-center rounded-lg text-slate-600 font-semibold text-sm transition peer-checked:bg-white peer-checked:text-amber-600 peer-checked:shadow-sm">Pending Only</div>
+                        </label>
+                        <label class="flex-1 relative cursor-pointer">
+                            <input type="radio" name="export-filter" value="completed" class="peer sr-only">
+                            <div class="p-2 text-center rounded-lg text-slate-600 font-semibold text-sm transition peer-checked:bg-white peer-checked:text-emerald-600 peer-checked:shadow-sm">Completed</div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Columns Selection -->
+                <div class="mb-6">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">2. Select Columns</h3>
+                    <div class="grid grid-cols-2 gap-y-3 gap-x-2">
+                        <label class="flex items-center space-x-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            <input type="checkbox" class="column-toggle h-5 w-5 text-blue-600 rounded border-slate-300" value="srNo" checked>
+                            <span class="text-sm font-semibold text-slate-700">Sr No.</span>
+                        </label>
+                        <label class="flex items-center space-x-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            <input type="checkbox" class="column-toggle h-5 w-5 text-blue-600 rounded border-slate-300" value="id" checked disabled>
+                            <span class="text-sm font-semibold text-slate-700">ATM ID</span>
+                        </label>
+                        <label class="flex items-center space-x-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            <input type="checkbox" class="column-toggle h-5 w-5 text-blue-600 rounded border-slate-300" value="building" checked>
+                            <span class="text-sm font-semibold text-slate-700">Building</span>
+                        </label>
+                        <label class="flex items-center space-x-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            <input type="checkbox" class="column-toggle h-5 w-5 text-blue-600 rounded border-slate-300" value="area" checked>
+                            <span class="text-sm font-semibold text-slate-700">Area</span>
+                        </label>
+                        <label class="flex items-center space-x-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            <input type="checkbox" class="column-toggle h-5 w-5 text-blue-600 rounded border-slate-300" value="lat">
+                            <span class="text-sm font-semibold text-slate-700">Latitude</span>
+                        </label>
+                        <label class="flex items-center space-x-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            <input type="checkbox" class="column-toggle h-5 w-5 text-blue-600 rounded border-slate-300" value="lng">
+                            <span class="text-sm font-semibold text-slate-700">Longitude</span>
+                        </label>
+                        <label class="flex items-center space-x-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                            <input type="checkbox" class="column-toggle h-5 w-5 text-blue-600 rounded border-slate-300" value="status" checked>
+                            <span class="text-sm font-semibold text-slate-700">Status</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex flex-col space-y-3">
+                <button onclick="handlePDF()" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold shadow-md hover:bg-blue-700 transition flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-file-pdf text-xl"></i>
+                    <span>Download PDF Report</span>
+                </button>
+                <button onclick="handleCopy()" class="w-full bg-slate-800 text-white py-4 rounded-xl font-bold shadow hover:bg-slate-700 transition flex items-center justify-center space-x-2">
+                    <i class="fa-regular fa-copy text-xl"></i>
+                    <span>Copy to Clipboard (Excel)</span>
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around items-center h-16 pb-safe z-30 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+        <button onclick="switchTab('list')" id="tab-list" class="tab-btn flex flex-col items-center justify-center w-full h-full text-blue-600 font-bold transition">
+            <i class="fa-solid fa-list-ul text-lg mb-1"></i>
+            <span class="text-[10px] uppercase tracking-wide">Tasks</span>
+        </button>
+        <button onclick="switchTab('map')" id="tab-map" class="tab-btn flex flex-col items-center justify-center w-full h-full text-slate-400 hover:text-blue-500 font-medium transition">
+            <i class="fa-solid fa-map-location-dot text-lg mb-1"></i>
+            <span class="text-[10px] uppercase tracking-wide">Map & Route</span>
+        </button>
+        <button onclick="switchTab('export')" id="tab-export" class="tab-btn flex flex-col items-center justify-center w-full h-full text-slate-400 hover:text-blue-500 font-medium transition">
+            <i class="fa-solid fa-file-export text-lg mb-1"></i>
+            <span class="text-[10px] uppercase tracking-wide">Export</span>
+        </button>
+    </nav>
+
+    <!-- Edit Location Modal -->
+    <div id="edit-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[500] hidden flex-col justify-center items-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl transform transition-transform scale-95" id="edit-modal-content">
+            <div class="flex justify-between items-center mb-5">
+                <h3 class="text-lg font-bold text-slate-800" id="edit-modal-title">Edit Coordinates</h3>
+                <button onclick="closeEditModal()" class="text-slate-400 hover:text-slate-700 bg-slate-100 rounded-full h-8 w-8 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <input type="hidden" id="edit-atm-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Latitude</label>
+                    <input type="number" step="any" id="edit-lat" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 20.05505">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Longitude</label>
+                    <input type="number" step="any" id="edit-lng" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. 73.79938">
+                </div>
+            </div>
+            <button onclick="saveCoordinates()" class="w-full mt-6 bg-blue-600 text-white font-bold py-3 rounded-xl shadow hover:bg-blue-700 transition">
+                Save & Update Map
+            </button>
+        </div>
+    </div>
+
+    <!-- Confirm Action Modal -->
+    <div id="confirm-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[700] hidden flex-col justify-center items-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-xs p-6 shadow-2xl transform transition-transform scale-95 text-center" id="confirm-modal-content">
+            <div class="mb-4">
+                <div class="mx-auto w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mb-3 shadow-inner border border-blue-100">
+                    <i class="fa-solid fa-circle-question text-blue-500 text-2xl"></i>
+                </div>
+                <h3 class="text-lg font-black text-slate-800 uppercase tracking-wide" id="confirm-modal-title">Confirm</h3>
+                <p class="text-sm font-medium text-slate-500 mt-2" id="confirm-modal-msg">Are you sure?</p>
+            </div>
+            <div class="flex space-x-3 mt-6">
+                <button onclick="closeConfirmModal()" class="flex-1 bg-slate-100 text-slate-600 font-bold py-3 rounded-xl hover:bg-slate-200 transition border border-slate-200 shadow-sm">Cancel</button>
+                <button id="confirm-modal-btn" class="flex-1 text-white font-bold py-3 rounded-xl shadow transition">Yes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden div for PDF generation formatting -->
+    <div id="pdf-container" class="hidden bg-white p-8 absolute top-0 left-0 w-[800px] z-[-1]"></div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-20 left-1/2 transform -translate-x-1/2 z-[600] flex flex-col space-y-2 w-11/12 max-w-sm pointer-events-none"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+
+    <script>
+        /* 
+          YOUR MAPTILER API KEY GOES HERE.
+          If empty, the app defaults to OpenStreetMap standard tiles.
+        */
+        const MAPTILER_API_KEY = "f8saxde8jlnYuT81zcT3"; 
+
+        // Full Parsed Data (103+ Items from PDF and Image)
+        const defaultAtmData = [
+            // Page 1 & 2 & 3 PDF Base
+            { srNo: 1, id: "U1BF001469009", building: "Onkareshwar Apt", area: "Ekta Nagar Borgad", lat: "20.05505", lng: "73.79938", checked: false },
+            { srNo: 2, id: "U1BF001469011", building: "Shop no. 2, Dehbur Apt", area: "Near Bytco Point", lat: "19.95407", lng: "73.83717", checked: false },
+            { srNo: 3, id: "S1NN001469015", building: "ARTILLERY CENTRE", area: "NASHIK", lat: "19.951", lng: "73.809", checked: false },
+            { srNo: 4, id: "S1NN001469016", building: "CDO, MERI COLONY", area: "MERI COLONY Nashik", lat: "20.0301", lng: "73.8014", checked: false },
+            { srNo: 5, id: "S1NN001469017", building: "Vishal Petrol Pump", area: "Untwadi Road", lat: "19.986633", lng: "73.758441", checked: false },
+            { srNo: 7, id: "S1NN001469022", building: "SM JORE PETROL PUMP", area: "DINDORI ROAD MERI", lat: "20.887114", lng: "73.805157", checked: false },
+            { srNo: 8, id: "S1NN001469027", building: "SSICOF BLDG", area: "SATPUR MIDC AREA", lat: "20.00163", lng: "73.7219", checked: false },
+            { srNo: 9, id: "S1NN001469028", building: "493/267, ASHOK NAGAR", area: "SATPUR LINK ROAD", lat: "19.9935", lng: "73.7246", checked: false },
+            { srNo: 10, id: "S1NN001469031", building: "RAMBAUG BUILDING", area: "GANGAPUR ROAD", lat: "20.009373", lng: "73.766811", checked: false },
+            { srNo: 11, id: "U1BF001469046", building: "Chandra Bhaga Niwas", area: "sheast chowk New Nashik", lat: "19.963", lng: "73.76", checked: false },
+            { srNo: 12, id: "S1NN001469053", building: "ARTILLERY CENTRE", area: "NASHIK ROAD", lat: "19.951", lng: "73.809", checked: false },
+            { srNo: 13, id: "U1BF001469062", building: "Trimurti Complex", area: "PANCHAVATI", lat: "20.01159", lng: "73.82621", checked: false },
+            { srNo: 14, id: "U1BF001469064", building: "Shriram Nagar", area: "Wadala Pathardi Road", lat: "19.98097", lng: "73.79139", checked: false },
+            { srNo: 15, id: "U1BF001469066", building: "Datta krupa, hari om colony", area: "kamatwade road", lat: "19.97297", lng: "73.75236", checked: false },
+            { srNo: 16, id: "U1BF001469069", building: "Margasirsh Sector", area: "Vijay Nagar Bus Stop", lat: "19.96816", lng: "73.7597", checked: false },
+            { srNo: 17, id: "U1BF001469072", building: "Trimurti Complex", area: "Amrut Dham PANCHAVATI", lat: "20.01159", lng: "73.82621", checked: false },
+            { srNo: 18, id: "U1BF001469081", building: "Khandoba Chowk", area: "Wadala Goan Dist. Nashik", lat: "19.9698", lng: "73.79443", checked: false },
+            { srNo: 19, id: "U1BF001469082", building: "Manjulai Apartment", area: "Jail Road, Nashik Road", lat: "19.97336", lng: "73.84088", checked: false },
+            { srNo: 20, id: "U1BF001469093", building: "MANJULA APARTMENT", area: "JAIL ROAD", lat: "19.97296", lng: "73.7999", checked: false },
+            { srNo: 21, id: "S1NN001469107", building: "OPP ZILLA PARISHAD", area: "TRIMBAK NAKA", lat: "19.97322", lng: "73.78226", checked: false },
+            { srNo: 22, id: "T1BY001469118", building: "Laxmikrupa building", area: "Katya Maruti Chowk", lat: "20.079382", lng: "73.801159", checked: false },
+            { srNo: 23, id: "T1BH001469119", building: "Dhara Society", area: "Dasak Panchak", lat: "19.979546", lng: "73.844432", checked: false },
+            { srNo: 24, id: "T1BY001469121", building: "Mahaveer Nagari", area: "Dindori Road", lat: "20.016792", lng: "73.796382", checked: false },
+            { srNo: 25, id: "T1BH001469122", building: "Near Harshagiri Hospital", area: "Satpur-Ambad link road", lat: "19.9975", lng: "73.7898", checked: false },
+            { srNo: 26, id: "U1BF001469141", building: "Opposite ICICI & SBI ATM", area: "old Saikheda Road", lat: "19.9742", lng: "73.8304", checked: false },
+            { srNo: 27, id: "U1BF001469142", building: "Suman Niwas Kuber Tyres", area: "Lokhande Mala", lat: "19.9742", lng: "73.8304", checked: false },
+            { srNo: 28, id: "U1BF001469149", building: "Pokar Colony", area: "Dindori road", lat: "20.035287", lng: "73.807716", checked: false },
+            { srNo: 29, id: "S1BP006333010", building: "Laxmivijay Building", area: "Bhakti Dham Panchavati", lat: "19.96811", lng: "73.77506", checked: false },
+            { srNo: 30, id: "S1BW006333011", building: "Laxmivijay Building", area: "Peth Phata, Nasik", lat: "19.96811", lng: "73.77506", checked: false },
+            { srNo: 31, id: "S5NM006333621", building: "Laxmivijay Building", area: "Panchavati, Nasik", lat: "19.96811", lng: "73.77506", checked: false },
+            { srNo: 32, id: "U1BF007235002", building: "Skyline Majestic", area: "Kamal Nagar, Hirawadi", lat: "20.018084", lng: "73.814865", checked: false },
+            { srNo: 33, id: "S1BN007235004", building: "NEAR LEKHANAGAR", area: "NEW CIDCO NASIK", lat: "20.001366", lng: "73.775733", checked: false },
+            { srNo: 34, id: "U1BF007235005", building: "SBI CIDCO COLONY", area: "Ambedkar Nagar", lat: "19.955249", lng: "73.724304", checked: false },
+            { srNo: 35, id: "U1BF007235008", building: "MAHARANA PRATAP CHOWK", area: "NEAR LEKHA NAGAR", lat: "19.97323", lng: "73.76552", checked: false },
+            { srNo: 36, id: "U1BF007235009", building: "Chatrapati Shahu Nagar", area: "Untwadi Road", lat: "19.98853", lng: "73.75074", checked: false },
+            { srNo: 37, id: "U1BF007235010", building: "Audumbar corner", area: "ITI Ambad road", lat: "20.001909", lng: "73.790961", checked: false },
+            { srNo: 38, id: "U1BF007235011", building: "MHB COLONY", area: "ASHOK NAGAR SATPUR", lat: "19.989603", lng: "73.723597", checked: false },
+            { srNo: 39, id: "U1BF007235012", building: "Sadashiv Complex", area: "Adgoan, Nashik", lat: "20.035", lng: "73.75783", checked: false },
+            { srNo: 40, id: "U1BF007235015", building: "Sai Sahawas Appt", area: "Prashant Nagar, Pathardi", lat: "19.94989", lng: "73.75783", checked: false },
+            { srNo: 41, id: "U1BF007235017", building: "Hari Pooja, Apartment", area: "Jail Road Nashik", lat: "19.9789", lng: "73.8498", checked: false },
+            { srNo: 42, id: "U1BF007235019", building: "Shravan Sector", area: "Swami Vivekanand Nagar", lat: "19.96635", lng: "73.76635", checked: false },
+            { srNo: 43, id: "U1BF007235021", building: "VARADA COMPLEX", area: "KAMATHWADE NASHIK", lat: "20.37729", lng: "74.65574", checked: false },
+            { srNo: 45, id: "U1BF007235024", building: "GOPAL KRISHNA", area: "PANDIT COLONY CIDCO", lat: "19.9722", lng: "73.757", checked: false },
+            { srNo: 46, id: "U1BF007235025", building: "MAHARANA PRATAP CHOWK", area: "NEAR LEKHA NAGAR", lat: "19.97323", lng: "73.76552", checked: false },
+            { srNo: 47, id: "U1BF007235029", building: "Maya-Rajpal Colony", area: "MAKHMALABAD NAKA", lat: "20.0167", lng: "73.78938", checked: false },
+            { srNo: 48, id: "U1BF007235034", building: "sakshi bunglow", area: "Pethe nagar road", lat: "19.972", lng: "73.781", checked: false },
+            { srNo: 49, id: "U1BF007235035", building: "Anand Residency", area: "Ambad road", lat: "20.0115", lng: "73.80235", checked: false },
+            { srNo: 50, id: "U1BF007235036", building: "Pavan Nager Market", area: "New Cidco, Nashik", lat: "19.9722", lng: "73.757", checked: false },
+            { srNo: 51, id: "U1BF007235037", building: "Nivrutti vihar", area: "Trimurti ambad link", lat: "19.977241", lng: "73.754953", checked: false },
+            { srNo: 53, id: "U1BF007235041", building: "Rugved apartment", area: "Mumbai Naka", lat: "19.98678", lng: "73.78561", checked: false },
+            { srNo: 55, id: "U1BF007235043", building: "N3/J-56, OLD CIDCO", area: "Lekha Nagar", lat: "19.97575", lng: "73.77051", checked: false },
+            { srNo: 56, id: "U1BF007235052", building: "Swami Sankul", area: "Painth Road", lat: "19.88513", lng: "75.36165", checked: false },
+            { srNo: 57, id: "U1BF007235053", building: "mayur complex", area: "pathardi phata", lat: "19.987832", lng: "73.722525", checked: false },
+            { srNo: 58, id: "U1BF007235054", building: "Wasan Toyota", area: "wasan nagar", lat: "19.957826", lng: "73.761839", checked: false },
+            { srNo: 59, id: "U1BF007235056", building: "raj palace", area: "opposite mauli lawns", lat: "19.972511", lng: "73.747032", checked: false },
+            { srNo: 60, id: "T1NW007235059", building: "SBI Jehan Circle", area: "Gangapur Road", lat: "20.0109", lng: "73.739", checked: false },
+            { srNo: 61, id: "T1NW007235060", building: "SBI Ashoknagar", area: "Kedar tower", lat: "19.9975", lng: "73.7898", checked: false },
+            { srNo: 64, id: "T1NW007235066", building: "State Bank Of India", area: "Ambad I.A.", lat: "19.97524", lng: "73.78462", checked: false },
+            { srNo: 65, id: "T1BW007235067", building: "Matoshree complex", area: "Ashwin Nagar", lat: "19.204342", lng: "72.840195", checked: false },
+            { srNo: 66, id: "T1BW007235068", building: "Gajanan krupa Bldg", area: "Gangapur Village", lat: "20.04921", lng: "73.78397", checked: false },
+            { srNo: 67, id: "T1BW007235070", building: "Gopal Complex", area: "MAKHMALABAD ROAD", lat: "19.98127", lng: "73.81293", checked: false },
+            { srNo: 68, id: "U1BF007235074", building: "Cidco complex", area: "Trimurti chowk", lat: "19.9855", lng: "73.757545", checked: false },
+            { srNo: 69, id: "U1BF007235075", building: "shri ram nagar chowk", area: "Makhmalabad Bus Stand", lat: "20.047", lng: "73.758718", checked: false },
+            { srNo: 71, id: "U1BF007235077", building: "Mahavir Niwas", area: "Savta Nagar", lat: "19.97905", lng: "73.75955", checked: false },
+            { srNo: 72, id: "U1BF007235080", building: "saharanpur gavthan", area: "Sharanpur road", lat: "19.998031", lng: "73.769895", checked: false },
+            { srNo: 73, id: "U1BF007235087", building: "NEAR SEVA MEDICAL", area: "UTTAMNAGAR NASHIK", lat: "19.969602", lng: "73.754181", checked: false },
+            { srNo: 74, id: "U1BF007235092", building: "Ganesh Prasad Apt", area: "Panchavati", lat: "20.00933", lng: "73.797297", checked: false },
+            { srNo: 75, id: "U1BF007235100", building: "sai villa apartment", area: "Ambad Gaon", lat: "19.960979", lng: "73.727215", checked: false },
+            { srNo: 80, id: "S1BP010376001", building: "MERI COLONY", area: "DINDORI ROAD", lat: "20.034456", lng: "73.803399", checked: false },
+            { srNo: 86, id: "S1BN012508004", building: "Khanzode complex", area: "SBI ADGAON BRANCH", lat: "20.026095", lng: "73.842154", checked: false },
+            { srNo: 89, id: "S1BP014443001", building: "SURYA AVENUE", area: "Manekshaw Nagar", lat: "19.96923", lng: "73.75616", checked: false },
+            { srNo: 96, id: "S1BN018795001", building: "Gajanan Krupa Bldg", area: "Makhamalabad Road", lat: "19.97524", lng: "73.78462", checked: false },
+            { srNo: 98, id: "S1BP060431002", building: "CROWN COMPLEX", area: "SHARANPUR ROAD", lat: "20.001366", lng: "73.775733", checked: false },
+            { srNo: 100, id: "S1BP061400001", building: "Roongta Business centre", area: "Govind Nagar Nashik", lat: "19.98363", lng: "73.77925", checked: false },
+            { srNo: 101, id: "S1BN061401001", building: "P 24 SATPUR IND", area: "TRIMBAK ROAD", lat: "19.97998", lng: "73.71037", checked: false },
+            { srNo: 103, id: "S5NN065219621", building: "Shreeji Excelencia", area: "Anandwalli, Nashik", lat: "20.016533", lng: "73.735914", checked: false },
+            
+            // Image Based Additions
+            { srNo: 104, id: "S5NM050871621", building: "SHARADHA APARTMENT", area: "CIDCO-AMBAD LINK RD UPENDRA NAGAR", lat: "19.9740", lng: "73.7520", checked: false },
+            { srNo: 105, id: "S1BN012516001", building: "UPENDRA NAGAR BRANCH", area: "CIDCO-AMBAD LINK RD UPENDRA NAGAR", lat: "19.9740", lng: "73.7520", checked: false },
+            { srNo: 106, id: "S5NM012511621", building: "LAXMI COMPLEX 4TH SCHEME", area: "TRIMURTI CHOWK, CIDCO", lat: "19.9855", lng: "73.7575", checked: false },
+            { srNo: 107, id: "S1BN012511001", building: "SBI, TRIMURTI CHOWK", area: "TRIMURTI CHOWK, CIDCO", lat: "19.9855", lng: "73.7575", checked: false },
+            { srNo: 108, id: "S5NM004453621", building: "58, THATTE WADI ROAD", area: "COLLEGE ROAD", lat: "20.0080", lng: "73.7630", checked: false },
+            { srNo: 109, id: "T1BY001469120", building: "SHANTI NAGAR", area: "MAKHMALABAD GAON", lat: "20.0470", lng: "73.7587", checked: false },
+            { srNo: 110, id: "S1NN001469030", building: "RAJIV NAGAR", area: "INDIRA NAGAR", lat: "19.9650", lng: "73.7780", checked: false }
+        ];
+
+        let atms = [];
+        let map;
+        let markers = {};
+        let routingControl = null;
+        let userLocation = null;
+        let userMarker = null;
+        let routeWaypoints = [];
+        let pendingToggleId = null;
+
+        function initApp() {
+            // 1. Load Data
+            const storedData = localStorage.getItem('atmManagerDataV2');
+            if (storedData) {
+                try {
+                    atms = JSON.parse(storedData);
+                    // Ensure srNo exists for backwards compatibility
+                    atms = atms.map(atm => {
+                        if (!atm.srNo) {
+                            const defaultMatch = defaultAtmData.find(d => d.id === atm.id);
+                            atm.srNo = defaultMatch ? defaultMatch.srNo : 999;
+                        }
+                        return atm;
+                    });
+                } catch (e) {
+                    atms = JSON.parse(JSON.stringify(defaultAtmData));
+                }
+            } else {
+                atms = JSON.parse(JSON.stringify(defaultAtmData));
+            }
+
+            // 2. Render UI
+            renderList();
+            
+            // 3. Initialize Map (hidden initially to save resources, but need it ready)
+            initMap();
+        }
+
+        function saveData() {
+            localStorage.setItem('atmManagerDataV2', JSON.stringify(atms));
+            updateStats();
+        }
+
+        function routeFromList(lat, lng, id) {
+            switchTab('map');
+            setTimeout(() => {
+                routeToAtm(lat, lng, id);
+            }, 300);
+        }
+
+        function renderList(filterText = '') {
+            const container = document.getElementById('atm-list-container');
+            container.innerHTML = '';
+
+            let displayList = [...atms].sort((a, b) => {
+                if (a.checked === b.checked) return a.srNo - b.srNo;
+                return a.checked ? 1 : -1; // Pending first
+            });
+
+            if(filterText) {
+                const ft = filterText.toLowerCase();
+                displayList = displayList.filter(a => 
+                    a.id.toLowerCase().includes(ft) || 
+                    a.building.toLowerCase().includes(ft) || 
+                    a.area.toLowerCase().includes(ft)
+                );
+            }
+
+            if (displayList.length === 0) {
+                container.innerHTML = `<div class="text-center text-slate-400 mt-10 text-sm font-medium">No ATMs match your search.</div>`;
+            }
+
+            displayList.forEach(atm => {
+                const card = document.createElement('div');
+                card.className = `list-item bg-white p-3 md:p-4 rounded-2xl shadow-sm border ${atm.checked ? 'border-emerald-200' : 'border-slate-200'} flex flex-col relative overflow-hidden mb-3 ${atm.checked ? 'completed' : ''}`;
+                
+                // Allow clicking whole card except buttons to toggle completion
+                card.onclick = (e) => {
+                    if(!e.target.closest('button') && !e.target.closest('input')) {
+                        confirmToggle(atm.id);
+                    }
+                };
+
+                const validCoords = (atm.lat && atm.lng && !isNaN(atm.lat));
+                const latDisplay = atm.lat ? parseFloat(atm.lat).toFixed(5) : '<span class="text-rose-400 italic">Missing</span>';
+                const lngDisplay = atm.lng ? parseFloat(atm.lng).toFixed(5) : '<span class="text-rose-400 italic">Missing</span>';
+
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div class="flex items-center space-x-3">
+                            <input type="checkbox" id="cb-${atm.id}" class="custom-checkbox pointer-events-none flex-shrink-0" ${atm.checked ? 'checked' : ''}>
+                            <div>
+                                <h3 class="atm-id text-sm font-black text-slate-800 flex items-center">
+                                    <span class="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] mr-2 shadow-sm border border-blue-200">#${atm.srNo}</span> 
+                                    ${atm.id}
+                                </h3>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2 flex-shrink-0">
+                            ${atm.checked ? 
+                                `<span class="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-700 border border-emerald-200 shadow-sm"><i class="fa-solid fa-check mr-1"></i>Done</span>` : 
+                                `<span class="px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 border border-amber-200 shadow-sm"><i class="fa-regular fa-clock mr-1"></i>Pending</span>`
+                            }
+                        </div>
+                    </div>
+                    
+                    <div class="bg-slate-50/80 rounded-xl p-3 mt-3 border border-slate-100 space-y-2">
+                        <div class="flex items-start">
+                            <div class="bg-white p-1 rounded border border-slate-200 shadow-sm mr-2 mt-0.5">
+                                <i class="fa-regular fa-building text-blue-500 text-[10px] w-3 text-center"></i>
+                            </div>
+                            <span class="text-xs text-slate-700 font-medium">${atm.building}</span>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="bg-white p-1 rounded border border-slate-200 shadow-sm mr-2 mt-0.5">
+                                <i class="fa-solid fa-location-dot text-rose-500 text-[10px] w-3 text-center"></i>
+                            </div>
+                            <span class="text-xs text-slate-600">${atm.area}</span>
+                        </div>
+                    </div>
+
+                    <div class="flex justify-between items-center mt-3 pt-3 border-t border-slate-100">
+                        <div class="flex space-x-4 text-[10px] font-mono text-slate-500 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
+                            <div class="flex flex-col">
+                                <span class="text-slate-400 uppercase text-[8px] font-bold tracking-wider">Latitude</span>
+                                <span class="font-semibold text-slate-700">${latDisplay}</span>
+                            </div>
+                            <div class="flex flex-col">
+                                <span class="text-slate-400 uppercase text-[8px] font-bold tracking-wider">Longitude</span>
+                                <span class="font-semibold text-slate-700">${lngDisplay}</span>
+                            </div>
+                        </div>
+                        <div class="flex space-x-2">
+                            ${validCoords ? `
+                            <button onclick="event.stopPropagation(); routeFromList('${atm.lat}', '${atm.lng}', '${atm.id}')" class="h-8 px-3 bg-blue-50 hover:bg-blue-600 text-blue-600 hover:text-white rounded-lg transition-colors border border-blue-200 flex items-center shadow-sm" title="Route">
+                                <i class="fa-solid fa-diamond-turn-right text-xs mr-1.5"></i> <span class="text-xs font-bold">Route</span>
+                            </button>` : ''}
+                            <button onclick="event.stopPropagation(); openEditModal('${atm.id}')" class="h-8 w-8 bg-white hover:bg-slate-100 text-slate-600 rounded-lg transition-colors border border-slate-200 flex items-center justify-center shadow-sm" title="Edit Location">
+                                <i class="fa-solid fa-pen-to-square text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            updateStats();
+            updateMapMarkers();
+        }
+
+        function filterList() {
+            const val = document.getElementById('search-input').value;
+            renderList(val);
+        }
+
+        function toggleComplete(id) {
+            const index = atms.findIndex(a => a.id === id);
+            if (index !== -1) {
+                atms[index].checked = !atms[index].checked;
+                saveData();
+                renderList(document.getElementById('search-input').value);
+                
+                if (atms[index].checked) {
+                    showToast(`Marked ${id} Completed`, 'success');
+                }
+            }
+        }
+
+        function updateStats() {
+            const total = atms.length;
+            const completed = atms.filter(a => a.checked).length;
+            const pending = total - completed;
+
+            document.getElementById('stat-total').innerHTML = `<i class="fa-solid fa-list mr-1 opacity-70"></i> Total: ${total}`;
+            document.getElementById('stat-pending').innerHTML = `<i class="fa-solid fa-clock mr-1 opacity-70"></i> Pending: ${pending}`;
+            document.getElementById('stat-completed').innerHTML = `<i class="fa-solid fa-check-double mr-1 opacity-70"></i> Done: ${completed}`;
+        }
+
+        function initMap() {
+            // Default center to Nashik
+            map = L.map('map', { zoomControl: false }).setView([20.000, 73.780], 12);
+            
+            // Move zoom control
+            L.control.zoom({ position: 'topright' }).addTo(map);
+
+            // Layer configuration
+            const tileUrl = MAPTILER_API_KEY && MAPTILER_API_KEY.length > 5 
+                ? `https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=${MAPTILER_API_KEY}`
+                : `https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`;
+
+            L.tileLayer(tileUrl, {
+                attribution: '&copy; OpenStreetMap & ATM Tracker'
+            }).addTo(map);
+
+            // Init Routing Machine (Invisible initially)
+            routingControl = L.Routing.control({
+                waypoints: [],
+                routeWhileDragging: false,
+                addWaypoints: false, // Disallow dragging to add waypoints to keep it strictly user -> ATM
+                show: false, // Hide instruction panel
+                lineOptions: {
+                    styles: [{color: '#3b82f6', opacity: 0.8, weight: 6}] // Blue bold route
+                },
+                createMarker: function() { return null; } // We handle our own markers
+            }).addTo(map);
+
+            // Hide the default panel forcefully
+            routingControl.on('routesfound', function(e) {
+                document.getElementById('route-indicator').classList.remove('hidden');
+                const stops = routeWaypoints.length > 2 ? ` (${routeWaypoints.length - 1} Stops)` : '';
+                document.getElementById('route-text').innerText = `Navigating${stops}: ${Math.round(e.routes[0].summary.totalDistance / 1000)} km, ${Math.round(e.routes[0].summary.totalTime / 60)} min`;
+            });
+
+            // Start locating user
+            locateUser();
+        }
+
+        function updateMapMarkers() {
+            if(!map) return;
+
+            // Clear existing
+            Object.values(markers).forEach(m => map.removeLayer(m));
+            markers = {};
+
+            // Custom Icon styles
+            const pendingIcon = L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div style="background-color:#ef4444; width:16px; height:16px; border-radius:50%; border:2px solid white; box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [16, 16]
+            });
+            const doneIcon = L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div style="background-color:#10b981; width:14px; height:14px; border-radius:50%; border:2px solid white; box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>`,
+                iconSize: [14, 14]
+            });
+
+            atms.forEach(atm => {
+                if(atm.lat && atm.lng && !isNaN(atm.lat)) {
+                    const marker = L.marker([atm.lat, atm.lng], {
+                        icon: atm.checked ? doneIcon : pendingIcon
+                    }).addTo(map);
+                    
+                    // Allow hard/long press to add to route
+                    marker.on('contextmenu', () => {
+                        addToRoute(atm.lat, atm.lng, atm.id);
+                    });
+
+                    const popupContent = `
+                        <div class="p-1 min-w-[160px]">
+                            <h4 class="font-bold text-sm text-slate-800 border-b pb-1 mb-2 flex items-center justify-between">
+                                ${atm.id} 
+                                <span class="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded ml-2">Sr ${atm.srNo}</span>
+                            </h4>
+                            <p class="text-xs font-medium text-slate-600 mb-3 line-clamp-2">${atm.building}</p>
+                            <div class="flex flex-col space-y-2">
+                                <button onclick="addToRoute('${atm.lat}', '${atm.lng}', '${atm.id}')" 
+                                        class="w-full bg-blue-600 text-white text-[11px] font-bold py-2 rounded-lg shadow hover:bg-blue-700 transition flex items-center justify-center">
+                                    <i class="fa-solid fa-plus mr-1.5"></i> Add to Route (Next Stop)
+                                </button>
+                                <button onclick="routeToAtm('${atm.lat}', '${atm.lng}', '${atm.id}')" 
+                                        class="w-full bg-slate-100 text-slate-600 text-[11px] font-bold py-2 rounded-lg border border-slate-200 shadow-sm hover:bg-slate-200 transition flex items-center justify-center">
+                                    <i class="fa-solid fa-diamond-turn-right mr-1.5"></i> New Route Here
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    marker.bindPopup(popupContent);
+                    markers[atm.id] = marker;
+                }
+            });
+        }
+
+        function locateUser() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    userLocation = {lat, lng};
+                    
+                    if(userMarker) map.removeLayer(userMarker);
+                    
+                    const userIcon = L.divIcon({
+                        className: 'user-icon',
+                        html: `<div style="background-color:#3b82f6; width:20px; height:20px; border-radius:50%; border:3px solid white; box-shadow:0 0 10px rgba(59, 130, 246, 0.8);"></div>`,
+                        iconSize: [20, 20]
+                    });
+
+                    userMarker = L.marker([lat, lng], {icon: userIcon, zIndexOffset: 1000}).addTo(map);
+                    userMarker.bindPopup('<b class="text-sm">You are here</b>');
+                    
+                    map.setView([lat, lng], 13);
+                }, () => {
+                    showToast("Location access denied or unavailable.", 'error');
+                }, { enableHighAccuracy: true });
+            }
+        }
+
+        function routeToAtm(lat, lng, id) {
+            if(!userLocation) {
+                showToast("Please allow location to calculate route.", 'error');
+                locateUser();
+                return;
+            }
+            
+            // Close popup
+            if(markers[id]) markers[id].closePopup();
+            
+            // Set waypoints: Start a brand new route User -> ATM
+            routeWaypoints = [
+                L.latLng(userLocation.lat, userLocation.lng),
+                L.latLng(lat, lng)
+            ];
+            routingControl.setWaypoints(routeWaypoints);
+            showToast(`Started new route to ${id}`, 'info');
+        }
+
+        function addToRoute(lat, lng, id) {
+            if(!userLocation) {
+                showToast("Please allow location first.", 'error');
+                locateUser();
+                return;
+            }
+            
+            if(markers[id]) markers[id].closePopup();
+            
+            // If no active route exists, start from user location
+            if (routeWaypoints.length === 0) {
+                routeWaypoints.push(L.latLng(userLocation.lat, userLocation.lng));
+            }
+            
+            // Push the new ATM stop
+            routeWaypoints.push(L.latLng(lat, lng));
+            routingControl.setWaypoints(routeWaypoints);
+            showToast(`Added ${id} as Stop #${routeWaypoints.length - 1}`, 'success');
+        }
+
+        function clearRoute() {
+            if (routeWaypoints.length === 0) {
+                showToast("No active route to clear.", 'info');
+                return;
+            }
+            
+            document.getElementById('confirm-modal-title').innerText = "Clear Route";
+            document.getElementById('confirm-modal-msg').innerHTML = "Are you sure you want to clear the entire multi-stop route?";
+            
+            const btn = document.getElementById('confirm-modal-btn');
+            btn.innerText = "Yes, Clear Route";
+            btn.className = `flex-1 font-bold py-3 rounded-xl shadow transition text-white bg-rose-500 hover:bg-rose-600`;
+            
+            btn.onclick = () => {
+                performClearRoute();
+                closeConfirmModal();
+            };
+
+            const modal = document.getElementById('confirm-modal');
+            const content = document.getElementById('confirm-modal-content');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setTimeout(() => content.classList.remove('scale-95'), 10);
+        }
+
+        function performClearRoute() {
+            routeWaypoints = [];
+            routingControl.setWaypoints([]);
+            document.getElementById('route-indicator').classList.add('hidden');
+            showToast("Multi-stop Route cleared.", 'info');
+        }
+
+        function switchTab(tabId) {
+            // Hide all
+            document.getElementById('view-list').classList.add('hidden', 'opacity-0');
+            document.getElementById('view-map').classList.add('hidden', 'opacity-0');
+            document.getElementById('view-export').classList.add('hidden', 'opacity-0');
+            
+            // Reset nav buttons
+            ['tab-list', 'tab-map', 'tab-export'].forEach(id => {
+                const el = document.getElementById(id);
+                el.classList.remove('text-blue-600');
+                el.classList.add('text-slate-400');
+            });
+
+            // Show selected
+            const view = document.getElementById(`view-${tabId}`);
+            view.classList.remove('hidden');
+            setTimeout(() => view.classList.remove('opacity-0'), 10); // Fade in
+            
+            const btn = document.getElementById(`tab-${tabId}`);
+            btn.classList.remove('text-slate-400');
+            btn.classList.add('text-blue-600');
+
+            if(tabId === 'map') {
+                setTimeout(() => map.invalidateSize(), 100); // Fix Leaflet render bug when hidden
+            }
+        }
+
+        function openEditModal(id) {
+            const atm = atms.find(a => a.id === id);
+            if(!atm) return;
+            
+            document.getElementById('edit-atm-id').value = id;
+            document.getElementById('edit-modal-title').innerText = `Location: ${id}`;
+            document.getElementById('edit-lat').value = atm.lat || '';
+            document.getElementById('edit-lng').value = atm.lng || '';
+            
+            const modal = document.getElementById('edit-modal');
+            const content = document.getElementById('edit-modal-content');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setTimeout(() => content.classList.remove('scale-95'), 10);
+        }
+
+        function closeEditModal() {
+            const modal = document.getElementById('edit-modal');
+            const content = document.getElementById('edit-modal-content');
+            content.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }, 200);
+        }
+
+        function confirmToggle(id) {
+            const atm = atms.find(a => a.id === id);
+            if(!atm) return;
+            pendingToggleId = id;
+            
+            const actionTitle = atm.checked ? "Clear Status" : "Mark as Done";
+            const actionMsg = atm.checked 
+                ? `Are you sure you want to move ATM <b class="text-amber-500">${id}</b> back to the Pending list?` 
+                : `Are you sure you have completed task for ATM <b class="text-emerald-500">${id}</b>?`;
+            
+            document.getElementById('confirm-modal-title').innerText = actionTitle;
+            document.getElementById('confirm-modal-msg').innerHTML = actionMsg;
+            
+            const btn = document.getElementById('confirm-modal-btn');
+            btn.innerText = "Yes, Confirm";
+            btn.className = `flex-1 font-bold py-3 rounded-xl shadow transition text-white ${atm.checked ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-500 hover:bg-emerald-600'}`;
+            
+            btn.onclick = () => {
+                executeToggle(pendingToggleId);
+                closeConfirmModal();
+            };
+
+            const modal = document.getElementById('confirm-modal');
+            const content = document.getElementById('confirm-modal-content');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            setTimeout(() => content.classList.remove('scale-95'), 10);
+        }
+
+        function closeConfirmModal() {
+            const modal = document.getElementById('confirm-modal');
+            const content = document.getElementById('confirm-modal-content');
+            content.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }, 200);
+            pendingToggleId = null;
+        }
+
+        function executeToggle(id) {
+            const index = atms.findIndex(a => a.id === id);
+            if (index !== -1) {
+                atms[index].checked = !atms[index].checked;
+                saveData();
+                renderList(document.getElementById('search-input').value);
+                
+                if (atms[index].checked) {
+                    showToast(`Marked ${id} Completed`, 'success');
+                } else {
+                    showToast(`Moved ${id} to Pending`, 'info');
+                }
+            }
+        }
+
+        function saveCoordinates() {
+            const id = document.getElementById('edit-atm-id').value;
+            const lat = parseFloat(document.getElementById('edit-lat').value);
+            const lng = parseFloat(document.getElementById('edit-lng').value);
+            
+            const index = atms.findIndex(a => a.id === id);
+            if(index > -1) {
+                // Ensure values are stored safely as strings or empty if invalid
+                atms[index].lat = isNaN(lat) ? '' : lat.toString();
+                atms[index].lng = isNaN(lng) ? '' : lng.toString();
+                saveData();
+                
+                // renderList already calls updateMapMarkers() automatically
+                renderList(document.getElementById('search-input').value); 
+                showToast(`Coordinates updated for ${id}`, 'success');
+                closeEditModal();
+                
+                // UX Enhancement: Center the map to the newly updated location
+                if (!isNaN(lat) && !isNaN(lng) && map) {
+                    map.setView([lat, lng], 14);
+                }
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            const colors = {
+                success: 'bg-emerald-600',
+                info: 'bg-slate-800',
+                error: 'bg-rose-500'
+            };
+            const icons = {
+                success: 'fa-check-circle',
+                info: 'fa-info-circle',
+                error: 'fa-exclamation-circle'
+            };
+
+            toast.className = `toast ${colors[type]} text-white px-4 py-3 rounded-xl shadow-xl flex items-center space-x-3 text-sm font-bold`;
+            toast.innerHTML = `<i class="fa-solid ${icons[type]} text-lg"></i> <span>${message}</span>`;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translate(-50%, 100%)';
+                toast.style.transition = 'all 0.3s ease';
+                setTimeout(() => toast.remove(), 300);
+            }, 2500);
+        }
+
+        function getExportConfiguration() {
+            const filterValue = document.querySelector('input[name="export-filter"]:checked').value;
+            const columnCheckboxes = document.querySelectorAll('.column-toggle:checked');
+            const columns = Array.from(columnCheckboxes).map(cb => cb.value);
+
+            let exportData = [...atms];
+            // Sort to maintain pending top, done bottom for reports
+            exportData.sort((a,b) => a.checked === b.checked ? (a.srNo - b.srNo) : (a.checked ? 1 : -1));
+
+            if (filterValue === 'pending') exportData = exportData.filter(a => !a.checked);
+            if (filterValue === 'completed') exportData = exportData.filter(a => a.checked);
+
+            return { columns, exportData, filterValue };
+        }
+
+        function handleCopy() {
+            const { columns, exportData } = getExportConfiguration();
+            if (exportData.length === 0) {
+                showToast("No ATMs match this filter.", 'error'); return;
+            }
+
+            const headersMap = { srNo: "Sr. No", id: "ATM ID", building: "Building", area: "Area/Landmark", lat: "Latitude", lng: "Longitude", status: "Status" };
+            let textOutput = columns.map(c => headersMap[c]).join('\t') + '\n';
+            
+            exportData.forEach(atm => {
+                const row = columns.map(c => c === 'status' ? (atm.checked ? 'Completed' : 'Pending') : (atm[c] || ''));
+                textOutput += row.join('\t') + '\n';
+            });
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(textOutput).then(() => showToast("Copied to Excel clipboard!", 'success')).catch(() => fallbackCopy(textOutput));
+            } else {
+                fallbackCopy(textOutput);
+            }
+        }
+
+        function fallbackCopy(text) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed"; document.body.appendChild(textArea);
+            textArea.focus(); textArea.select();
+            try {
+                document.execCommand('copy') ? showToast("Copied to Excel clipboard!", 'success') : showToast("Copy failed.", 'error');
+            } catch (err) { showToast("Error copying.", 'error'); }
+            document.body.removeChild(textArea);
+        }
+
+        function handlePDF() {
+            const { columns, exportData, filterValue } = getExportConfiguration();
+            if (exportData.length === 0) {
+                showToast("No data to export.", 'error'); return;
+            }
+
+            showToast("Generating PDF...", 'info');
+            const pdfContainer = document.getElementById('pdf-container');
+            pdfContainer.innerHTML = '';
+            pdfContainer.classList.remove('hidden');
+
+            const headersMap = { srNo: "Sr. No", id: "ATM ID", building: "Building", area: "Area/Landmark", lat: "Lat", lng: "Lng", status: "Status" };
+            let title = filterValue === 'all' ? "Complete ATM Report" : (filterValue === 'pending' ? "Pending ATM List" : "Completed ATM List");
+            
+            let html = `
+                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                    <div style="border-bottom: 2px solid #2563eb; padding-bottom: 15px; margin-bottom: 20px;">
+                        <h2 style="color: #1e293b; margin: 0; font-size: 22px;">${title}</h2>
+                        <p style="color: #64748b; margin: 5px 0 0 0; font-size: 12px;">Generated: ${new Date().toLocaleString()}</p>
+                    </div>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 10px;">
+                        <thead style="background-color: #f1f5f9;">
+                            <tr>${columns.map(c => `<th style="padding: 10px 8px; text-align: left; border: 1px solid #cbd5e1;">${headersMap[c]}</th>`).join('')}</tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            exportData.forEach((atm, i) => {
+                const bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+                const status = atm.checked ? '<b style="color:#10b981;">Done</b>' : '<b style="color:#ef4444;">Pending</b>';
+                html += `<tr style="background-color: ${bg}">`;
+                columns.forEach(c => {
+                    let val = c === 'status' ? status : (atm[c] || '-');
+                    html += `<td style="padding: 8px; border: 1px solid #cbd5e1; color: #334155;">${val}</td>`;
+                });
+                html += `</tr>`;
+            });
+            html += `</tbody></table></div>`;
+            pdfContainer.innerHTML = html;
+
+            const opt = {
+                margin: 10,
+                filename: `Nashik_ATM_${filterValue}_${Date.now()}.pdf`,
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { scale: 2 },
+                jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            html2pdf().set(opt).from(pdfContainer).save().then(() => {
+                pdfContainer.classList.add('hidden');
+                pdfContainer.innerHTML = '';
+                showToast("PDF Downloaded!", 'success');
+            }).catch(err => {
+                pdfContainer.classList.add('hidden');
+                showToast("Failed to generate PDF.", 'error');
+            });
+        }
+
+        // Initialize App on load
+        window.onload = initApp;
+    </script>
+</body>
+</html>
